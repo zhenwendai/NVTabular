@@ -58,3 +58,6 @@ class StatOperator(Operator):
     def clear(self):
         """ zero and reinitialize all relevant statistical properties"""
         raise NotImplementedError("clear isn't implemented for this op!")
+
+    def set_output_path(self, path):
+        pass

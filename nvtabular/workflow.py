@@ -14,10 +14,12 @@
 # limitations under the License.
 #
 import logging
+import os
 from typing import TYPE_CHECKING, Optional
 
 import cudf
 import dask
+import dill
 import yaml
 from dask.core import flatten
 
@@ -65,6 +67,8 @@ class Workflow:
     def __init__(self, column_group: ColumnGroup, client: Optional["distributed.Client"] = None):
         self.column_group = column_group
         self.client = client
+        self.input_dtypes = None
+        self.output_dtypes = None
 
     def transform(self, dataset: Dataset) -> Dataset:
         """Transforms the dataset by applying the graph of operators to it. Requires the 'fit'
@@ -140,6 +144,10 @@ class Workflow:
             for dependencies in stat_ops.values():
                 dependencies.difference_update(current_phase)
 
+        # hack: store input/output dtypes here
+        self.input_dtypes = dataset.to_ddf().dtypes
+        self.output_dtypes = self.transform(dataset).to_ddf().head().dtypes
+
     def fit_transform(self, dataset: Dataset) -> Dataset:
         """Convenience method to both fit the workflow and transform the dataset in a single
         call. Equivalent to calling workflow.fit(dataset) followed by workflow.transform(dataset)
@@ -154,6 +162,20 @@ class Workflow:
         """
         self.fit(dataset)
         return self.transform(dataset)
+
+    def save(self, path):
+        os.makedirs(path, exist_ok=True)
+
+        # point all stat ops to store intermediate output (parquet etc) at path
+        for stat in _get_stat_ops([self.column_group]):
+            stat.op.set_output_path(path)
+
+        with open(os.path.join(path, "workflow.dill"), "wb") as o:
+            dill.dump(self, o)
+
+    @classmethod
+    def load(_cls, path):
+        return dill.load(open(os.path.join(path, "workflow.dill"), "rb"))
 
     def save_stats(self, path):
         node_ids = {}

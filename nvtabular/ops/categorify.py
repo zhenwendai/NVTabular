@@ -291,6 +291,20 @@ class Categorify(StatOperator):
         self.categories = {}
         self.mh_columns = []
 
+    def set_output_path(self, path):
+        categories = {}
+        from shutil import copyfile
+
+        for column, column_path in self.categories.items():
+            new_path = column_path.replace(self.out_path, path)
+            if new_path != column_path:
+                os.makedirs(os.path.dirname(new_path), exist_ok=True)
+                copyfile(column_path, new_path)
+            categories[column] = new_path
+
+        self.out_path = path
+        self.categories = categories
+
     @annotate("Categorify_transform", color="darkgreen", domain="nvt_python")
     def transform(self, columns: ColumnNames, gdf: cudf.DataFrame) -> cudf.DataFrame:
         new_gdf = gdf.copy(deep=False)
@@ -313,39 +327,42 @@ class Categorify(StatOperator):
 
         # Encode each column-group separately
         for name in cat_names:
-            # Use the column-group `list` directly (not the string name)
-            use_name = multi_col_group.get(name, name)
+            try:
+                # Use the column-group `list` directly (not the string name)
+                use_name = multi_col_group.get(name, name)
 
-            # Storage name may be different than group for case (2)
-            # Only use the "aliased" `storage_name` if we are dealing with
-            # a multi-column group, or if we are doing joint encoding
+                # Storage name may be different than group for case (2)
+                # Only use the "aliased" `storage_name` if we are dealing with
+                # a multi-column group, or if we are doing joint encoding
 
-            if use_name != name or self.encode_type == "joint":
-                storage_name = self.storage_name.get(name, name)
-            else:
-                storage_name = name
+                if use_name != name or self.encode_type == "joint":
+                    storage_name = self.storage_name.get(name, name)
+                else:
+                    storage_name = name
 
-            if isinstance(use_name, tuple):
-                use_name = list(use_name)
+                if isinstance(use_name, tuple):
+                    use_name = list(use_name)
 
-            path = self.categories[storage_name]
-            new_gdf[name] = _encode(
-                use_name,
-                storage_name,
-                path,
-                gdf,
-                self.cat_cache,
-                na_sentinel=self.na_sentinel,
-                freq_threshold=self.freq_threshold[name]
-                if isinstance(self.freq_threshold, dict)
-                else self.freq_threshold,
-                search_sorted=self.search_sorted,
-                buckets=self.num_buckets,
-                encode_type=self.encode_type,
-                cat_names=cat_names,
-            )
-            if self.dtype:
-                new_gdf[name] = new_gdf[name].astype(self.dtype, copy=False)
+                path = self.categories[storage_name]
+                new_gdf[name] = _encode(
+                    use_name,
+                    storage_name,
+                    path,
+                    gdf,
+                    self.cat_cache,
+                    na_sentinel=self.na_sentinel,
+                    freq_threshold=self.freq_threshold[name]
+                    if isinstance(self.freq_threshold, dict)
+                    else self.freq_threshold,
+                    search_sorted=self.search_sorted,
+                    buckets=self.num_buckets,
+                    encode_type=self.encode_type,
+                    cat_names=cat_names,
+                )
+                if self.dtype:
+                    new_gdf[name] = new_gdf[name].astype(self.dtype, copy=False)
+            except Exception as e:
+                raise RuntimeError(f"Failed to categorical encode column {name}") from e
 
         return new_gdf
 
