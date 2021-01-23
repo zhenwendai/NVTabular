@@ -51,11 +51,11 @@ def test_gpu_workflow_api(tmpdir, client, df, dataset, gpu_memory_frac, engine, 
     workflow.fit(dataset)
 
     if dump:
-        # TODO: load/save stats
-        config_file = tmpdir + "/temp.yaml"
-        workflow.save_stats(config_file)
-        workflow.clear_stats()
-        workflow.load_stats(config_file)
+        workflow_dir = os.path.join(tmpdir, "workflow")
+        workflow.save(workflow_dir)
+        workflow = None
+
+        workflow = Workflow.load(workflow_dir)
 
     def get_norms(tar: cudf.Series):
         gdf = tar.fillna(0)
@@ -140,11 +140,9 @@ def test_gpu_workflow(tmpdir, client, df, dataset, gpu_memory_frac, engine, dump
 
     workflow.fit(dataset)
     if dump:
-        # TODO: serialization
-        config_file = tmpdir + "/temp.yaml"
-        workflow.save_stats(config_file)
-        workflow.clear_stats()
-        workflow.load_stats(config_file)
+        workflow_dir = tmpdir + "/workflow"
+        workflow.save(workflow_dir)
+        workflow = nvt.Workflow.load(workflow_dir)
 
     def get_norms(tar: cudf.Series):
         gdf = tar.fillna(0)

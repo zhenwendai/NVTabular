@@ -281,29 +281,13 @@ class Categorify(StatOperator):
         for col in categories:
             self.categories[col] = categories[col]
 
-    def save(self):
-        return [self.categories, self.mh_columns]
-
-    def load(self, data):
-        self.categories, self.mh_columns = data
-
     def clear(self):
         self.categories = {}
         self.mh_columns = []
 
-    def set_output_path(self, path):
-        categories = {}
-        from shutil import copyfile
-
-        for column, column_path in self.categories.items():
-            new_path = column_path.replace(self.out_path, path)
-            if new_path != column_path:
-                os.makedirs(os.path.dirname(new_path), exist_ok=True)
-                copyfile(column_path, new_path)
-            categories[column] = new_path
-
-        self.out_path = path
-        self.categories = categories
+    def set_storage_path(self, new_path, copy=False):
+        self.categories = _copy_storage(self.categories, self.out_path, new_path, copy=copy)
+        self.out_path = new_path
 
     @annotate("Categorify_transform", color="darkgreen", domain="nvt_python")
     def transform(self, columns: ColumnNames, gdf: cudf.DataFrame) -> cudf.DataFrame:
@@ -1002,3 +986,19 @@ def _hash_bucket(gdf, num_buckets, col, encode_type="joint"):
         val = val % nb
         encoded = val
     return encoded
+
+
+def _copy_storage(existing_stats, existing_path, new_path, copy):
+    """ helper function to copy files to a new storage location"""
+    from shutil import copyfile
+
+    new_locations = {}
+    for column, existing_file in existing_stats.items():
+        new_file = existing_file.replace(str(existing_path), str(new_path))
+        if copy and new_file != existing_file:
+            os.makedirs(os.path.dirname(new_file), exist_ok=True)
+            copyfile(existing_file, new_file)
+
+        new_locations[column] = new_file
+
+    return new_locations

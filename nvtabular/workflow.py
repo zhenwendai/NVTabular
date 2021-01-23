@@ -13,14 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import json
 import logging
 import os
+import sys
 from typing import TYPE_CHECKING, Optional
 
+import cloudpickle
 import cudf
 import dask
-import dill
-import yaml
 from dask.core import flatten
 
 from nvtabular.column_group import ColumnGroup, iter_nodes
@@ -164,76 +165,43 @@ class Workflow:
         return self.transform(dataset)
 
     def save(self, path):
+        import nvtabular
+
         os.makedirs(path, exist_ok=True)
 
-        # point all stat ops to store intermediate output (parquet etc) at path
+        # point all stat ops to store intermediate output (parquet etc) at the path
+        # this lets us easily bundle
         for stat in _get_stat_ops([self.column_group]):
-            stat.op.set_output_path(path)
+            stat.op.set_storage_path(path, copy=True)
 
-        with open(os.path.join(path, "workflow.dill"), "wb") as o:
-            dill.dump(self, o)
+        # generate a file of all versions used to generate this bundle
+        with open(os.path.join(path, "versions.json"), "w") as o:
+            json.dump(
+                {
+                    "nvtabular": nvtabular.__version__,
+                    "cudf": cudf.__version__,
+                    "python": sys.version,
+                },
+                o,
+            )
+
+        with open(os.path.join(path, "workflow"), "wb") as o:
+            cloudpickle.dump(self, o)
 
     @classmethod
     def load(_cls, path):
-        return dill.load(open(os.path.join(path, "workflow.dill"), "rb"))
+        # TODO: validate versions file, and throw a warning on error
+        # versions = json.load(open(os.path.join(path, "versions.json")))
 
-    def save_stats(self, path):
-        node_ids = {}
-        output_data = []
+        # load up the workflwo object
+        ret = cloudpickle.load(open(os.path.join(path, "workflow"), "rb"))
 
-        def add_node(node):
-            if node in node_ids:
-                return node_ids[node]
+        # we might have been copied since saving, update all the stat ops
+        # with the new path to their storage locations
+        for stat in _get_stat_ops([ret.column_group]):
+            stat.op.set_storage_path(path, copy=False)
 
-            data = {
-                "columns": node.columns,
-            }
-            if node.parents:
-                data["name"] = node.label
-                data["parents"] = [add_node(parent) for parent in node.parents]
-            else:
-                data["name"] = "input"
-
-            if isinstance(node.op, StatOperator):
-                data["stats"] = node.op.save()
-
-            nodeid = len(output_data)
-            data["id"] = nodeid
-            node_ids[node] = nodeid
-            output_data.append(data)
-            return nodeid
-
-        # recursively save each operator, providing enough context
-        # to (columns/labels etc) to load again
-        add_node(self.column_group)
-        with open(path, "w") as outfile:
-            yaml.safe_dump(output_data, outfile, default_flow_style=False)
-
-    def load_stats(self, path):
-        def load_node(nodeid, node):
-            saved = nodes[nodeid]
-            if "parents" not in saved:
-                return
-
-            if node.label != saved["name"]:
-                raise ValueError(
-                    "Failed to load saved statistics: names %s != %s" % (node.label, saved["name"])
-                )
-            if node.columns != saved["columns"]:
-                raise ValueError(
-                    "Failed to load saved statistics: columns %s != %s"
-                    % (node.columns, saved["column"])
-                )
-
-            if isinstance(node.op, StatOperator):
-                node.op.load(saved["stats"])
-
-            for parentid, parent in zip(saved["parents"], node.parents):
-                load_node(parentid, parent)
-
-        # recursively load each operator in the graph
-        nodes = yaml.safe_load(open(path))
-        load_node(nodes[-1]["id"], self.column_group)
+        return ret
 
     def clear_stats(self):
         for stat in _get_stat_ops([self.column_group]):
